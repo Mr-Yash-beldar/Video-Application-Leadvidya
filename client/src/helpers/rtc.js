@@ -11,16 +11,6 @@ const url =
     ? "https://api.namaste.ind.in"
     : "http://localhost:5000";
 
-// if ( !room ) {
-//     document.querySelector( '#room-create' ).attributes.removeNamedItem( 'hidden' );
-// }
-
-// else if ( !username ) {
-//     document.querySelector( '#username-set' ).attributes.removeNamedItem( 'hidden' );
-// }
-
-// else {
-
 var pc = [];
 
 let socket = io(`${url}/stream`);
@@ -36,14 +26,14 @@ export const loadRtc = (meetingId) => {
   let commElem = document.getElementsByClassName("room-comm");
   const username = sessionStorage.getItem("username");
   const token = getAdminToken();
+
   for (let i = 0; i < commElem.length; i++) {
     commElem[i].attributes.removeNamedItem("hidden");
   }
-  //Get user video by default
+
   getAndSetUserStream();
 
   socket.on("connect", () => {
-    //set socketId
     socketId = socket.io.engine.id;
 
     socket.emit("subscribe", {
@@ -80,11 +70,11 @@ export const loadRtc = (meetingId) => {
 
     socket.on("sdp", async (data) => {
       if (data.description.type === "offer") {
-        const session = data.description
-          ? await pc[data.sender].setRemoteDescription(
-              new RTCSessionDescription(data.description),
-            )
-          : "";
+        if (data.description) {
+          await pc[data.sender].setRemoteDescription(
+            new RTCSessionDescription(data.description),
+          );
+        }
 
         h.getUserFullMedia()
           .then(async (stream) => {
@@ -92,7 +82,6 @@ export const loadRtc = (meetingId) => {
               h.setLocalStream(stream);
             }
 
-            //save my stream
             myStream = stream;
 
             stream.getTracks().forEach((track) => {
@@ -100,7 +89,6 @@ export const loadRtc = (meetingId) => {
             });
 
             let answer = await pc[data.sender].createAnswer();
-
             await pc[data.sender].setLocalDescription(answer);
 
             socket.emit("sdp", {
@@ -127,9 +115,7 @@ export const loadRtc = (meetingId) => {
   function getAndSetUserStream() {
     h.getUserFullMedia()
       .then((stream) => {
-        //save my stream
         myStream = stream;
-
         h.setLocalStream(stream);
       })
       .catch((e) => {
@@ -144,10 +130,7 @@ export const loadRtc = (meetingId) => {
       sender: username,
     };
 
-    //emit chat message
     socket.emit("chat", data);
-
-    //add localchat
     h.addChat(data, "local");
   }
 
@@ -156,20 +139,19 @@ export const loadRtc = (meetingId) => {
 
     if (screen && screen.getTracks().length) {
       screen.getTracks().forEach((track) => {
-        pc[partnerName].addTrack(track, screen); //should trigger negotiationneeded event
+        pc[partnerName].addTrack(track, screen);
       });
     } else if (myStream) {
       myStream.getTracks().forEach((track) => {
-        pc[partnerName].addTrack(track, myStream); //should trigger negotiationneeded event
+        pc[partnerName].addTrack(track, myStream);
       });
     } else {
       h.getUserFullMedia()
         .then((stream) => {
-          //save my stream
           myStream = stream;
 
           stream.getTracks().forEach((track) => {
-            pc[partnerName].addTrack(track, stream); //should trigger negotiationneeded event
+            pc[partnerName].addTrack(track, stream);
           });
 
           h.setLocalStream(stream);
@@ -179,11 +161,9 @@ export const loadRtc = (meetingId) => {
         });
     }
 
-    //create offer
     if (createOffer) {
       pc[partnerName].onnegotiationneeded = async () => {
         let offer = await pc[partnerName].createOffer();
-
         await pc[partnerName].setLocalDescription(offer);
 
         socket.emit("sdp", {
@@ -194,7 +174,6 @@ export const loadRtc = (meetingId) => {
       };
     }
 
-    //send ice candidate to partnerNames
     pc[partnerName].onicecandidate = ({ candidate }) => {
       socket.emit("ice candidates", {
         candidate: candidate,
@@ -203,57 +182,52 @@ export const loadRtc = (meetingId) => {
       });
     };
 
-    //add
     pc[partnerName].ontrack = (e) => {
       let str = e.streams[0];
       if (document.getElementById(`${partnerName}-video`)) {
         document.getElementById(`${partnerName}-video`).srcObject = str;
       } else {
-        //video elem
         let newVid = document.createElement("video");
         newVid.id = `${partnerName}-video`;
         newVid.srcObject = str;
         newVid.autoplay = true;
         newVid.className = "remote-video";
 
-        //video controls elements
         let controlDiv = document.createElement("div");
         controlDiv.className = "remote-video-controls";
         controlDiv.innerHTML = `<i class="fa fa-microphone text-app pr-3 mute-remote-mic" title="Mute"></i>
                         <i class="fa fa-expand text-app expand-remote-video" title="Expand"></i>`;
 
-        //create a new div for card
         let cardDiv = document.createElement("div");
         cardDiv.className = "card card-sm";
         cardDiv.id = partnerName;
         cardDiv.appendChild(newVid);
         cardDiv.appendChild(controlDiv);
 
-        //put div in main-section elem
         document.getElementById("videos").appendChild(cardDiv);
-
         h.adjustVideoElemSize();
       }
     };
 
-    pc[partnerName].onconnectionstatechange = (d) => {
+    pc[partnerName].onconnectionstatechange = () => {
       switch (pc[partnerName].iceConnectionState) {
         case "disconnected":
         case "failed":
-          h.closeVideo(partnerName);
-          break;
-
         case "closed":
           h.closeVideo(partnerName);
+          break;
+        default:
           break;
       }
     };
 
-    pc[partnerName].onsignalingstatechange = (d) => {
+    pc[partnerName].onsignalingstatechange = () => {
       switch (pc[partnerName].signalingState) {
         case "closed":
           console.log("Signalling state is 'closed'");
           h.closeVideo(partnerName);
+          break;
+        default:
           break;
       }
     };
@@ -263,18 +237,11 @@ export const loadRtc = (meetingId) => {
     h.shareScreen()
       .then((stream) => {
         h.toggleShareIcons(true);
-
-        //disable the video toggle btns while sharing screen. This is to ensure clicking on the btn does not interfere with the screen sharing
-        //It will be enabled was user stopped sharing screen
         h.toggleVideoBtnDisabled(true);
 
-        //save my screen stream
         screen = stream;
-
-        //share the new stream with all partners
         broadcastNewTracks(stream, "video", false);
 
-        //When the stop sharing button shown by the browser is clicked
         screen.getVideoTracks()[0].addEventListener("ended", () => {
           stopSharingScreen();
         });
@@ -285,55 +252,37 @@ export const loadRtc = (meetingId) => {
   }
 
   function stopSharingScreen() {
-    //enable video toggle btn
     h.toggleVideoBtnDisabled(false);
 
-    return new Promise((res, rej) => {
-      const track = screen.getTracks().length
-        ? screen.getTracks().forEach((track) => track.stop())
-        : "";
+    try {
+      if (screen && screen.getTracks().length) {
+        screen.getTracks().forEach((mediaTrack) => mediaTrack.stop());
+      }
 
-      res();
-    })
-      .then(() => {
-        h.toggleShareIcons(false);
-        broadcastNewTracks(myStream, "video");
-      })
-      .catch((e) => {
-        console.error(e);
-      });
+      h.toggleShareIcons(false);
+      broadcastNewTracks(myStream, "video");
+    } catch (e) {
+      console.error(e);
+    }
   }
 
   function broadcastNewTracks(stream, type, mirrorMode = true) {
     h.setLocalStream(stream, mirrorMode);
 
     let track =
-      type == "audio" ? stream.getAudioTracks()[0] : stream.getVideoTracks()[0];
+      type === "audio"
+        ? stream.getAudioTracks()[0]
+        : stream.getVideoTracks()[0];
 
     for (let p in pc) {
       let pName = pc[p];
 
-      if (typeof pc[pName] == "object") {
+      if (typeof pc[pName] === "object") {
         h.replaceTrack(track, pc[pName]);
       }
     }
   }
 
-  function toggleRecordingIcons(isRecording) {
-    let e = document.getElementById("record");
-
-    if (isRecording) {
-      e.setAttribute("title", "Stop recording");
-      e.children[0].classList.add("text-danger");
-      e.children[0].classList.remove("text-app");
-    } else {
-      e.setAttribute("title", "Record");
-      e.children[0].classList.add("text-app");
-      e.children[0].classList.remove("text-danger");
-    }
-  }
-
-  //Chat textarea
   document.getElementById("chat-input").addEventListener("keypress", (e) => {
     if (e.which === 13 && e.target.value.trim()) {
       e.preventDefault();
@@ -346,7 +295,6 @@ export const loadRtc = (meetingId) => {
     }
   });
 
-  //When the video icon is clicked
   document.getElementById("toggle-video").addEventListener("click", (e) => {
     e.preventDefault();
 
@@ -369,7 +317,6 @@ export const loadRtc = (meetingId) => {
     broadcastNewTracks(myStream, "video");
   });
 
-  //When the mute icon is clicked
   document.getElementById("toggle-mute").addEventListener("click", (e) => {
     e.preventDefault();
 
@@ -392,40 +339,32 @@ export const loadRtc = (meetingId) => {
     broadcastNewTracks(myStream, "audio");
   });
 
-  //When user clicks the 'Share screen' button
   document.getElementById("share-screen").addEventListener("click", (e) => {
     e.preventDefault();
 
     if (
       screen &&
       screen.getVideoTracks().length &&
-      screen.getVideoTracks()[0].readyState != "ended"
+      screen.getVideoTracks()[0].readyState !== "ended"
     ) {
       stopSharingScreen();
     } else {
       shareScreen();
     }
   });
-
-  // }
 };
 
-//When record button is clicked
 export const record = (type = "screen") => {
-  /**
-   * Ask user what they want to record.
-   * Get the stream based on selection and start recording
-   */
   console.log("recoerd is clien");
-  if (!mediaRecorder || mediaRecorder.state == "inactive") {
+  if (!mediaRecorder || mediaRecorder.state === "inactive") {
     if (type === "screen") {
       return recordScreen();
     } else {
       return recordVideo();
     }
-  } else if (mediaRecorder.state == "paused") {
+  } else if (mediaRecorder.state === "paused") {
     mediaRecorder.resume();
-  } else if (mediaRecorder.state == "recording") {
+  } else if (mediaRecorder.state === "recording") {
     mediaRecorder.stop();
   }
 };
@@ -455,7 +394,6 @@ function startRecording(stream) {
   };
 }
 
-//When user choose to record screen
 const recordScreen = () => {
   if (screen && screen.getVideoTracks().length) {
     startRecording(screen);
@@ -468,13 +406,11 @@ const recordScreen = () => {
         return true;
       })
       .catch(() => {
-        //throw new Error('recording canceled');
         return false;
       });
   }
 };
 
-//When user choose to record own video
 const recordVideo = () => {
   if (myStream && myStream.getTracks().length) {
     startRecording(myStream);
