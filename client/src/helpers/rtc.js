@@ -1,14 +1,10 @@
-/**
- * @author Sumit Chaudhari <sumit.nitsurat@gmail.com>
- * @date 5th January, 2019
- */
 import h from "./index.js";
 import io from "socket.io-client";
 import { getAdminToken } from "../services/room";
 
 const url =
   process.env.NODE_ENV === "production"
-    ? "https://api.namaste.ind.in"
+    ? "https://video-application-leadvidya.onrender.com"
     : "http://localhost:5000";
 
 var pc = [];
