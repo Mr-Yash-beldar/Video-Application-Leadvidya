@@ -27,7 +27,7 @@ const MeetingRoom = () => {
         setWaitingUsers(data.waiting || []);
       },
     });
-  }, [meetingId]);
+  }, [meetingId, isAdmin]);
 
   if (isWaiting) {
     return (

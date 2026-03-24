@@ -32,18 +32,24 @@ const stream =
         const existingWaiting = meeting.waiting.find((u) => u.socketId === data.socketId);
         if (!existingWaiting) {
           meeting.waiting.push({ socketId: data.socketId, name });
-          socket.nsp.to(room).emit("update-participants", { participants: meeting.participants, waiting: meeting.waiting });
+          const uniqueWaiting = Array.from(new Map(meeting.waiting.map(u => [u.socketId, u])).values());
+          const uniqueParticipants = Array.from(new Map(meeting.participants.map(u => [u.socketId, u])).values());
+          socket.nsp.to(room).emit("update-participants", { participants: uniqueParticipants, waiting: uniqueWaiting });
         }
         socket.emit("waiting-room");
         return;
       }
 
-      meeting.participants.push({ socketId: data.socketId, name, isAdmin });
+      if (!meeting.participants.find(p => p.socketId === data.socketId)) {
+        meeting.participants.push({ socketId: data.socketId, name, isAdmin });
+      }
 
       socket.join(room);
       socket.join(data.socketId);
 
-      socket.nsp.to(room).emit("update-participants", { participants: meeting.participants, waiting: meeting.waiting });
+      const uniqueWaiting = Array.from(new Map(meeting.waiting.map(u => [u.socketId, u])).values());
+      const uniqueParticipants = Array.from(new Map(meeting.participants.map(u => [u.socketId, u])).values());
+      socket.nsp.to(room).emit("update-participants", { participants: uniqueParticipants, waiting: uniqueWaiting });
 
       const roomMembers = socket.adapter.rooms[room] ? socket.adapter.rooms[room].length : 0;
       if (roomMembers > 1) {

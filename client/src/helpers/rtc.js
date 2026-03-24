@@ -31,6 +31,10 @@ export const loadRtc = (meetingId, callbacks = {}) => {
 
   socket.on("connect", () => {
     socketId = socket.io.engine.id;
+    // Reset participants on new connection to avoid duplicates from previous sessions
+    if (callbacks.onUpdateParticipants) {
+      callbacks.onUpdateParticipants({ participants: [], waiting: [] });
+    }
 
     socket.emit("subscribe", {
       room: room,
@@ -323,6 +327,8 @@ export const loadRtc = (meetingId, callbacks = {}) => {
       elem.setAttribute("title", "Show Video");
 
       myStream.getVideoTracks()[0].enabled = false;
+      // Also stop the track to turn off the physical camera light
+      // myStream.getVideoTracks()[0].stop(); // Optional: stopping completely might require re-getting stream later
     } else {
       e.target.classList.remove("fa-video-slash");
       e.target.classList.add("fa-video");
