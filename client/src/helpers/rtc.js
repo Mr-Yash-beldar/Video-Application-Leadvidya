@@ -17,10 +17,10 @@ var screen = "";
 var recordedStream = [];
 var mediaRecorder = "";
 
-export const loadRtc = (meetingId) => {
+export const loadRtc = (meetingId, callbacks = {}) => {
   const room = meetingId;
   let commElem = document.getElementsByClassName("room-comm");
-  const username = sessionStorage.getItem("username");
+  const username = sessionStorage.getItem("username") || "Guest";
   const token = getAdminToken();
 
   for (let i = 0; i < commElem.length; i++) {
@@ -36,6 +36,26 @@ export const loadRtc = (meetingId) => {
       room: room,
       socketId: socketId,
       token: token,
+      name: username,
+    });
+
+    socket.on("waiting-room", () => {
+      if (callbacks.onWaitingRoom) callbacks.onWaitingRoom(true);
+    });
+
+    socket.on("join-accepted", () => {
+      if (callbacks.onWaitingRoom) callbacks.onWaitingRoom(false);
+      socket.emit("subscribe", {
+        room: room,
+        socketId: socketId,
+        token: token,
+        name: username,
+        accepted: true,
+      });
+    });
+
+    socket.on("update-participants", (data) => {
+      if (callbacks.onUpdateParticipants) callbacks.onUpdateParticipants(data);
     });
 
     socket.on("meeting-error", (data) => {
@@ -299,12 +319,14 @@ export const loadRtc = (meetingId) => {
     if (myStream.getVideoTracks()[0].enabled) {
       e.target.classList.remove("fa-video");
       e.target.classList.add("fa-video-slash");
+      elem.classList.add("btn-inactive");
       elem.setAttribute("title", "Show Video");
 
       myStream.getVideoTracks()[0].enabled = false;
     } else {
       e.target.classList.remove("fa-video-slash");
       e.target.classList.add("fa-video");
+      elem.classList.remove("btn-inactive");
       elem.setAttribute("title", "Hide Video");
 
       myStream.getVideoTracks()[0].enabled = true;
@@ -321,12 +343,14 @@ export const loadRtc = (meetingId) => {
     if (myStream.getAudioTracks()[0].enabled) {
       e.target.classList.remove("fa-microphone-alt");
       e.target.classList.add("fa-microphone-alt-slash");
+      elem.classList.add("btn-inactive");
       elem.setAttribute("title", "Unmute");
 
       myStream.getAudioTracks()[0].enabled = false;
     } else {
       e.target.classList.remove("fa-microphone-alt-slash");
       e.target.classList.add("fa-microphone-alt");
+      elem.classList.remove("btn-inactive");
       elem.setAttribute("title", "Mute");
 
       myStream.getAudioTracks()[0].enabled = true;
@@ -348,6 +372,18 @@ export const loadRtc = (meetingId) => {
       shareScreen();
     }
   });
+};
+
+export const admitUser = (meetingId, socketId) => {
+  if (socket) {
+    socket.emit("admit-user", { room: meetingId, socketId });
+  }
+};
+
+export const rejectUser = (meetingId, socketId) => {
+  if (socket) {
+    socket.emit("reject-user", { room: meetingId, socketId });
+  }
 };
 
 export const record = (type = "screen") => {

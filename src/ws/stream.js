@@ -4,6 +4,8 @@ const stream =
     socket.on("subscribe", (data) => {
       const room = data && data.room ? String(data.room).trim() : "";
       const token = data && data.token ? data.token : "";
+      const name = data && data.name ? data.name : "Guest";
+      const accepted = data && data.accepted;
 
       if (!room) {
         socket.emit("meeting-error", { message: "Meeting ID is required" });
@@ -26,13 +28,64 @@ const stream =
         return;
       }
 
+      if (!isAdmin && !accepted) {
+        const existingWaiting = meeting.waiting.find((u) => u.socketId === data.socketId);
+        if (!existingWaiting) {
+          meeting.waiting.push({ socketId: data.socketId, name });
+          socket.nsp.to(room).emit("update-participants", { participants: meeting.participants, waiting: meeting.waiting });
+        }
+        socket.emit("waiting-room");
+        return;
+      }
+
+      meeting.participants.push({ socketId: data.socketId, name, isAdmin });
+
       socket.join(room);
       socket.join(data.socketId);
 
-      const roomMembers = socket.adapter.rooms[room];
-      if (roomMembers && roomMembers.length > 1) {
-        socket.to(room).emit("new user", { socketId: data.socketId });
+      socket.nsp.to(room).emit("update-participants", { participants: meeting.participants, waiting: meeting.waiting });
+
+      const roomMembers = socket.adapter.rooms[room] ? socket.adapter.rooms[room].length : 0;
+      if (roomMembers > 1) {
+        socket.to(room).emit("new user", { socketId: data.socketId, name });
       }
+    });
+
+    socket.on("admit-user", (data) => {
+      const { room, socketId } = data;
+      const meeting = meetings.get(room);
+      if (meeting) {
+        meeting.waiting = meeting.waiting.filter((u) => u.socketId !== socketId);
+        socket.to(socketId).emit("join-accepted");
+        socket.nsp.to(room).emit("update-participants", { participants: meeting.participants, waiting: meeting.waiting });
+      }
+    });
+
+    socket.on("reject-user", (data) => {
+      const { room, socketId } = data;
+      const meeting = meetings.get(room);
+      if (meeting) {
+        meeting.waiting = meeting.waiting.filter((u) => u.socketId !== socketId);
+        socket.to(socketId).emit("meeting-error", { message: "Your request to join was declined." });
+        socket.nsp.to(room).emit("update-participants", { participants: meeting.participants, waiting: meeting.waiting });
+      }
+    });
+
+    socket.on("disconnect", () => {
+      meetings.forEach((meeting) => {
+        let changed = false;
+        if (meeting.participants.find((p) => p.socketId === socket.id)) {
+          meeting.participants = meeting.participants.filter((p) => p.socketId !== socket.id);
+          changed = true;
+        }
+        if (meeting.waiting.find((p) => p.socketId === socket.id)) {
+          meeting.waiting = meeting.waiting.filter((p) => p.socketId !== socket.id);
+          changed = true;
+        }
+        if (changed) {
+          socket.nsp.to(meeting.id).emit("update-participants", { participants: meeting.participants, waiting: meeting.waiting });
+        }
+      });
     });
 
     socket.on("newUserStart", (data) => {

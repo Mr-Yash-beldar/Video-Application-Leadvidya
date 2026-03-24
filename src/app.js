@@ -77,6 +77,8 @@ app.post("/api/meetings", authMiddleware, (req, res) => {
     createdAt: new Date().toISOString(),
     startedAt: null,
     started: false,
+    participants: [],
+    waiting: [],
   });
 
   return res.status(201).json({
