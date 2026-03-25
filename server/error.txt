@@ -1,0 +1,75 @@
+[dotenv@17.3.1] injecting env (0) from .env -- tip: ??????? auth for agents: https://vestauth.com
+node : node:events:502
+At line:1 char:1
++ node src/app.js 
+2>&1 | Out-File 
+-Encoding ASCII 
+error.txt
++ ~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo    
+          : NotSpeci  
+  fied: (node:event   
+ s:502:String) [],    
+ RemoteException
+    + FullyQualifiedE 
+   rrorId : NativeCo  
+  mmandError
+ 
+      throw er; // 
+Unhandled 'error' 
+event
+      ^
+
+Error: listen 
+EADDRINUSE: address 
+already in use :::5000
+    at Server.setupLis
+tenHandle [as 
+_listen2] 
+(node:net:1912:16)
+    at 
+listenInCluster 
+(node:net:1969:12)
+    at Server.listen 
+(node:net:2074:7)
+    at 
+Object.<anonymous> (D:
+\ZoomCloneServer\Video
+-Application-Leadvidya
+\server\src\app.js:176
+:8)
+    at 
+Module._compile (node:
+internal/modules/cjs/l
+oader:1565:14)
+    at Object..js (nod
+e:internal/modules/cjs
+/loader:1708:10)
+    at Module.load (no
+de:internal/modules/cj
+s/loader:1318:32)
+    at Function._load 
+(node:internal/modules
+/cjs/loader:1128:12)
+    at TracingChannel.
+traceSync (node:diagno
+stics_channel:322:14)
+    at wrapModuleLoad 
+(node:internal/modules
+/cjs/loader:219:24)
+Emitted 'error' event 
+on Server instance at:
+    at emitErrorNT 
+(node:net:1948:8)
+    at process.process
+TicksAndRejections (no
+de:internal/process/ta
+sk_queues:90:21) {
+  code: 'EADDRINUSE',
+  errno: -4091,
+  syscall: 'listen',
+  address: '::',
+  port: 5000
+}
+
+Node.js v22.12.0
