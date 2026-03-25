@@ -18,15 +18,168 @@ html, body, #root {
   position: relative;
 }
 
-.waiting-room-screen {
+/* ─── Pre-Join Screen ────────────────────────────────────── */
+.pre-join-screen {
   display: flex;
-  flex-direction: column;
   justify-content: center;
   align-items: center;
   height: 100vh;
+  width: 100vw;
   background-color: #202124;
-  color: white;
-  text-align: center;
+  font-family: 'Google Sans', 'Roboto', Arial, sans-serif;
+}
+
+.pre-join-card {
+  display: flex;
+  flex-direction: row;
+  gap: 40px;
+  align-items: center;
+  max-width: 900px;
+  width: 90%;
+  padding: 40px;
+  background: #292a2d;
+  border-radius: 12px;
+  box-shadow: 0 8px 40px rgba(0,0,0,0.6);
+}
+
+.pre-join-video-wrap {
+  position: relative;
+  width: 480px;
+  height: 270px;
+  background: #1a1a1a;
+  border-radius: 12px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.pre-join-video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scaleX(-1);
+}
+
+.pre-join-video.cam-off {
+  display: none;
+}
+
+.cam-off-placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: #9aa0a6;
+  gap: 12px;
+}
+
+.cam-off-icon {
+  font-size: 48px;
+}
+
+.pre-join-controls {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 12px;
+  background: rgba(0,0,0,0.5);
+  padding: 8px 16px;
+  border-radius: 32px;
+  backdrop-filter: blur(4px);
+}
+
+.pre-join-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  color: #fff;
+}
+
+.pre-join-title {
+  font-size: 28px;
+  font-weight: 400;
+  margin: 0;
+}
+
+.pre-join-subtitle {
+  font-size: 14px;
+  color: #9aa0a6;
+  margin: 0;
+}
+
+.pre-join-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ask-to-join-btn {
+  background: #1a73e8;
+  color: #fff;
+  border: none;
+  border-radius: 24px;
+  height: 48px;
+  font-size: 15px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s;
+  letter-spacing: 0.3px;
+}
+
+.ask-to-join-btn:hover {
+  background: #1557b0;
+}
+
+.leave-btn {
+  background: transparent;
+  color: #9aa0a6;
+  border: 1px solid #5f6368;
+  border-radius: 24px;
+  height: 44px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: color 0.2s, border-color 0.2s;
+}
+
+.leave-btn:hover {
+  color: #fff;
+  border-color: #fff;
+}
+
+.waiting-status {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  color: #9aa0a6;
+}
+
+.waiting-spinner {
+  width: 24px;
+  height: 24px;
+  border: 3px solid #5f6368;
+  border-top-color: #1a73e8;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (max-width: 700px) {
+  .pre-join-card {
+    flex-direction: column;
+    padding: 24px;
+  }
+  .pre-join-video-wrap {
+    width: 100%;
+    height: 200px;
+  }
 }
 
 /* Main Area */
@@ -395,4 +548,111 @@ video {
 
 .side-btn.active {
   color: #8ab4f8;
+}
+
+/* ─── Active Speaker Visualizer ──────────────────────────── */
+.meet-video-container.is-speaking,
+.card.card-sm.is-speaking {
+  outline: 3px solid #1a73e8;
+  box-shadow: 0 0 0 3px rgba(26, 115, 232, 0.35);
+  transition: outline 0.1s, box-shadow 0.1s;
+}
+
+/* ─── Host Badge ─────────────────────────────────────────── */
+.host-badge {
+  display: inline-block;
+  background: #1a73e8;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 4px;
+  margin-left: 6px;
+  vertical-align: middle;
+  letter-spacing: 0.3px;
+}
+
+/* ─── Waitlist Badge on People Button ───────────────────── */
+.side-btn {
+  position: relative;
+}
+
+.waiting-badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  background: #ea4335;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  pointer-events: none;
+}
+
+/* ─── Waitlist section title accent ─────────────────────── */
+.waitlist-badge {
+  color: #ea4335 !important;
+  font-weight: 700 !important;
+}
+
+/* ─── Name Entry Input ───────────────────────────────────── */
+.name-input {
+  width: 100%;
+  background: #3c4043;
+  border: 1px solid #5f6368;
+  border-radius: 8px;
+  color: #fff;
+  font-size: 15px;
+  padding: 12px 16px;
+  outline: none;
+  font-family: inherit;
+  transition: border-color 0.2s;
+  box-sizing: border-box;
+}
+
+.name-input::placeholder {
+  color: #9aa0a6;
+}
+
+.name-input:focus {
+  border-color: #1a73e8;
+  box-shadow: 0 0 0 2px rgba(26, 115, 232, 0.25);
+}
+
+/* ─── Reject Button (waiting list) ──────────────────────── */
+.reject-btn {
+  background: transparent;
+  border: 1px solid #5f6368;
+  color: #9aa0a6;
+  border-radius: 50%;
+  width: 28px;
+  height: 28px;
+  cursor: pointer;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, color 0.15s;
+  margin-left: 6px;
+  flex-shrink: 0;
+}
+
+.reject-btn:hover {
+  background: #ea4335;
+  border-color: #ea4335;
+  color: #fff;
+}
+
+/* ─── Person Actions Flex ────────────────────────────────── */
+.person-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
 }

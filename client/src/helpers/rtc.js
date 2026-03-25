@@ -7,372 +7,327 @@ const url =
     ? "https://video-application-leadvidya.onrender.com"
     : "http://localhost:5000";
 
-var pc = [];
+let pc = {};
+// Connect but do NOT auto-subscribe — subscription is triggered explicitly
+let socket = io(`${url}/stream`, { autoConnect: true });
 
-let socket = io(`${url}/stream`);
-
-var socketId = "";
-var myStream = "";
-var screen = "";
+var myStream = null;
+var screen = null;
 var recordedStream = [];
 var mediaRecorder = "";
 
-export const loadRtc = (meetingId, callbacks = {}) => {
-  const room = meetingId;
-  let commElem = document.getElementsByClassName("room-comm");
-  const username = sessionStorage.getItem("username") || "Guest";
-  const token = getAdminToken();
+let rtcCallbacks = {
+  onWaitingRoom: null,
+  onUpdateParticipants: null,
+  onJoinAccepted: null,
+};
 
-  for (let i = 0; i < commElem.length; i++) {
-    commElem[i].attributes.removeNamedItem("hidden");
+let listenersInitialized = false;
+let currentMeetingId = "";
+
+// ─── Audio Visualizer ────────────────────────────────────────────────────────
+
+let audioContext = null;
+const activeVisualizers = new Set();
+
+function getAudioContext() {
+  if (!audioContext) {
+    audioContext = new (window.AudioContext || window.webkitAudioContext)();
   }
+  return audioContext;
+}
 
-  getAndSetUserStream();
+export function setupAudioVisualizer(stream, containerId) {
+  if (!stream || !stream.getAudioTracks().length) return;
+  if (activeVisualizers.has(containerId)) return; // prevent duplicates
+  activeVisualizers.add(containerId);
 
+  try {
+    const ctx = getAudioContext();
+    const source = ctx.createMediaStreamSource(stream);
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 256;
+    source.connect(analyser);
+    const dataArray = new Uint8Array(analyser.frequencyBinCount);
+    const THRESHOLD = 15;
+
+    const tick = () => {
+      analyser.getByteFrequencyData(dataArray);
+      const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
+      const el = document.getElementById(containerId);
+      if (el) {
+        el.classList.toggle("is-speaking", avg > THRESHOLD);
+        requestAnimationFrame(tick);
+      } else {
+        // Element removed, clean up
+        activeVisualizers.delete(containerId);
+        source.disconnect();
+      }
+    };
+    tick();
+  } catch (e) {
+    console.warn("Audio visualizer error:", e);
+    activeVisualizers.delete(containerId);
+  }
+}
+
+// ─── Socket Listeners (attached once) ────────────────────────────────────────
+
+const initSocketListeners = (meetingId) => {
+  if (listenersInitialized) return;
+  listenersInitialized = true;
+  currentMeetingId = meetingId;
+
+  // Server uses socket.id as authoritative ID — we just log it
   socket.on("connect", () => {
-    socketId = socket.io.engine.id;
-    // Reset participants on new connection to avoid duplicates from previous sessions
-    if (callbacks.onUpdateParticipants) {
-      callbacks.onUpdateParticipants({ participants: [], waiting: [] });
+    console.log("Socket connected, id:", socket.id);
+  });
+
+  socket.on("waiting-room", () => {
+    console.log("In waiting room");
+    if (rtcCallbacks.onWaitingRoom) rtcCallbacks.onWaitingRoom(true);
+  });
+
+  socket.on("join-accepted", () => {
+    console.log("Host admitted us!");
+    if (rtcCallbacks.onWaitingRoom) rtcCallbacks.onWaitingRoom(false);
+    if (rtcCallbacks.onJoinAccepted) rtcCallbacks.onJoinAccepted();
+    // Re-subscribe as accepted participant so server joins us to the room
+    sendSubscribe(currentMeetingId, true);
+  });
+
+  socket.on("update-participants", (data) => {
+    if (rtcCallbacks.onUpdateParticipants) rtcCallbacks.onUpdateParticipants(data);
+  });
+
+  socket.on("meeting-error", (data) => {
+    const msg = data && data.message ? data.message : "Unable to join this meeting.";
+    window.alert(msg);
+    window.location.href = "/";
+  });
+
+  socket.on("new user", (data) => {
+    socket.emit("newUserStart", { to: data.socketId, sender: socket.id });
+    init(true, data.socketId);
+  });
+
+  socket.on("newUserStart", (data) => {
+    init(false, data.sender);
+  });
+
+  socket.on("ice candidates", async (data) => {
+    if (!pc[data.sender]) return;
+    try {
+      if (data.candidate) {
+        await pc[data.sender].addIceCandidate(new RTCIceCandidate(data.candidate));
+      }
+    } catch (e) {
+      console.error("ICE error:", e);
     }
+  });
 
-    socket.emit("subscribe", {
-      room: room,
-      socketId: socketId,
-      token: token,
-      name: username,
-    });
-
-    socket.on("waiting-room", () => {
-      if (callbacks.onWaitingRoom) callbacks.onWaitingRoom(true);
-    });
-
-    socket.on("join-accepted", () => {
-      if (callbacks.onWaitingRoom) callbacks.onWaitingRoom(false);
-      socket.emit("subscribe", {
-        room: room,
-        socketId: socketId,
-        token: token,
-        name: username,
-        accepted: true,
-      });
-    });
-
-    socket.on("update-participants", (data) => {
-      if (callbacks.onUpdateParticipants) callbacks.onUpdateParticipants(data);
-    });
-
-    socket.on("meeting-error", (data) => {
-      const msg =
-        data && data.message ? data.message : "Unable to join this meeting.";
-      window.alert(msg);
-      window.location.href = "/";
-    });
-
-    socket.on("new user", (data) => {
-      socket.emit("newUserStart", { to: data.socketId, sender: socketId });
-      pc.push(data.socketId);
-      init(true, data.socketId);
-    });
-
-    socket.on("newUserStart", (data) => {
-      pc.push(data.sender);
-      init(false, data.sender);
-    });
-
-    socket.on("ice candidates", async (data) => {
-      return data.candidate
-        ? await pc[data.sender].addIceCandidate(
-            new RTCIceCandidate(data.candidate),
-          )
-        : "";
-    });
-
-    socket.on("sdp", async (data) => {
+  socket.on("sdp", async (data) => {
+    if (!pc[data.sender]) init(false, data.sender);
+    try {
       if (data.description.type === "offer") {
-        if (data.description) {
-          await pc[data.sender].setRemoteDescription(
-            new RTCSessionDescription(data.description),
-          );
+        await pc[data.sender].setRemoteDescription(new RTCSessionDescription(data.description));
+
+        if (!myStream) {
+          myStream = await h.getUserFullMedia();
+          const localEl = document.getElementById("local");
+          if (localEl) { h.setLocalStream(myStream); }
+          setupAudioVisualizer(myStream, "local-container");
         }
 
-        h.getUserFullMedia()
-          .then(async (stream) => {
-            if (!document.getElementById("local").srcObject) {
-              h.setLocalStream(stream);
-            }
+        myStream.getTracks().forEach((t) => pc[data.sender].addTrack(t, myStream));
 
-            myStream = stream;
-
-            stream.getTracks().forEach((track) => {
-              pc[data.sender].addTrack(track, stream);
-            });
-
-            let answer = await pc[data.sender].createAnswer();
-            await pc[data.sender].setLocalDescription(answer);
-
-            socket.emit("sdp", {
-              description: pc[data.sender].localDescription,
-              to: data.sender,
-              sender: socketId,
-            });
-          })
-          .catch((e) => {
-            console.error(e);
-          });
-      } else if (data.description.type === "answer") {
-        await pc[data.sender].setRemoteDescription(
-          new RTCSessionDescription(data.description),
-        );
-      }
-    });
-
-    socket.on("chat", (data) => {
-      h.addChat(data, "remote");
-    });
-  });
-
-  function getAndSetUserStream() {
-    h.getUserFullMedia()
-      .then((stream) => {
-        myStream = stream;
-        h.setLocalStream(stream);
-      })
-      .catch((e) => {
-        console.error(`stream error: ${e}`);
-      });
-  }
-
-  function sendMsg(msg) {
-    let data = {
-      room: room,
-      msg: msg,
-      sender: username,
-    };
-
-    socket.emit("chat", data);
-    h.addChat(data, "local");
-  }
-
-  function init(createOffer, partnerName) {
-    pc[partnerName] = new RTCPeerConnection(h.getIceServer());
-
-    if (screen && screen.getTracks().length) {
-      screen.getTracks().forEach((track) => {
-        pc[partnerName].addTrack(track, screen);
-      });
-    } else if (myStream) {
-      myStream.getTracks().forEach((track) => {
-        pc[partnerName].addTrack(track, myStream);
-      });
-    } else {
-      h.getUserFullMedia()
-        .then((stream) => {
-          myStream = stream;
-
-          stream.getTracks().forEach((track) => {
-            pc[partnerName].addTrack(track, stream);
-          });
-
-          h.setLocalStream(stream);
-        })
-        .catch((e) => {
-          console.error(`stream error: ${e}`);
-        });
-    }
-
-    if (createOffer) {
-      pc[partnerName].onnegotiationneeded = async () => {
-        let offer = await pc[partnerName].createOffer();
-        await pc[partnerName].setLocalDescription(offer);
+        const answer = await pc[data.sender].createAnswer();
+        await pc[data.sender].setLocalDescription(answer);
 
         socket.emit("sdp", {
-          description: pc[partnerName].localDescription,
-          to: partnerName,
-          sender: socketId,
+          description: pc[data.sender].localDescription,
+          to: data.sender,
+          sender: socket.id,
         });
-      };
-    }
-
-    pc[partnerName].onicecandidate = ({ candidate }) => {
-      socket.emit("ice candidates", {
-        candidate: candidate,
-        to: partnerName,
-        sender: socketId,
-      });
-    };
-
-    pc[partnerName].ontrack = (e) => {
-      let str = e.streams[0];
-      if (document.getElementById(`${partnerName}-video`)) {
-        document.getElementById(`${partnerName}-video`).srcObject = str;
-      } else {
-        let newVid = document.createElement("video");
-        newVid.id = `${partnerName}-video`;
-        newVid.srcObject = str;
-        newVid.autoplay = true;
-        newVid.className = "remote-video";
-
-        let controlDiv = document.createElement("div");
-        controlDiv.className = "remote-video-controls";
-        controlDiv.innerHTML = `<i class="fa fa-microphone text-app pr-3 mute-remote-mic" title="Mute"></i>
-                        <i class="fa fa-expand text-app expand-remote-video" title="Expand"></i>`;
-
-        let cardDiv = document.createElement("div");
-        cardDiv.className = "card card-sm";
-        cardDiv.id = partnerName;
-        cardDiv.appendChild(newVid);
-        cardDiv.appendChild(controlDiv);
-
-        document.getElementById("videos").appendChild(cardDiv);
-        h.adjustVideoElemSize();
+      } else if (data.description.type === "answer") {
+        await pc[data.sender].setRemoteDescription(new RTCSessionDescription(data.description));
       }
-    };
-
-    pc[partnerName].onconnectionstatechange = () => {
-      switch (pc[partnerName].iceConnectionState) {
-        case "disconnected":
-        case "failed":
-        case "closed":
-          h.closeVideo(partnerName);
-          break;
-        default:
-          break;
-      }
-    };
-
-    pc[partnerName].onsignalingstatechange = () => {
-      switch (pc[partnerName].signalingState) {
-        case "closed":
-          console.log("Signalling state is 'closed'");
-          h.closeVideo(partnerName);
-          break;
-        default:
-          break;
-      }
-    };
-  }
-
-  function shareScreen() {
-    h.shareScreen()
-      .then((stream) => {
-        h.toggleShareIcons(true);
-        h.toggleVideoBtnDisabled(true);
-
-        screen = stream;
-        broadcastNewTracks(stream, "video", false);
-
-        screen.getVideoTracks()[0].addEventListener("ended", () => {
-          stopSharingScreen();
-        });
-      })
-      .catch((e) => {
-        console.error(e);
-      });
-  }
-
-  function stopSharingScreen() {
-    h.toggleVideoBtnDisabled(false);
-
-    try {
-      if (screen && screen.getTracks().length) {
-        screen.getTracks().forEach((mediaTrack) => mediaTrack.stop());
-      }
-
-      h.toggleShareIcons(false);
-      broadcastNewTracks(myStream, "video");
     } catch (e) {
-      console.error(e);
-    }
-  }
-
-  function broadcastNewTracks(stream, type, mirrorMode = true) {
-    h.setLocalStream(stream, mirrorMode);
-
-    let track =
-      type === "audio"
-        ? stream.getAudioTracks()[0]
-        : stream.getVideoTracks()[0];
-
-    for (let p in pc) {
-      let pName = pc[p];
-
-      if (typeof pc[pName] === "object") {
-        h.replaceTrack(track, pc[pName]);
-      }
-    }
-  }
-
-  document.getElementById("chat-input").addEventListener("keypress", (e) => {
-    if (e.which === 13 && e.target.value.trim()) {
-      e.preventDefault();
-
-      sendMsg(e.target.value);
-
-      setTimeout(() => {
-        e.target.value = "";
-      }, 50);
+      console.error("SDP error:", e);
     }
   });
 
-  document.getElementById("toggle-video").addEventListener("click", (e) => {
-    e.preventDefault();
+  socket.on("chat", (data) => {
+    h.addChat(data, "remote");
+  });
+};
 
-    let elem = document.getElementById("toggle-video");
+// ─── Subscribe ────────────────────────────────────────────────────────────────
 
-    if (myStream.getVideoTracks()[0].enabled) {
-      e.target.classList.remove("fa-video");
-      e.target.classList.add("fa-video-slash");
-      elem.classList.add("btn-inactive");
-      elem.setAttribute("title", "Show Video");
+// Server uses socket.id from the connection itself — only send name, token, room, accepted
+const sendSubscribe = (meetingId, accepted = false) => {
+  const username = sessionStorage.getItem("username") || "Guest";
+  const token = getAdminToken();
+  socket.emit("subscribe", {
+    room: meetingId,
+    token,
+    name: username,
+    accepted,
+  });
+};
 
-      myStream.getVideoTracks()[0].enabled = false;
-      // Also stop the track to turn off the physical camera light
-      // myStream.getVideoTracks()[0].stop(); // Optional: stopping completely might require re-getting stream later
-    } else {
-      e.target.classList.remove("fa-video-slash");
-      e.target.classList.add("fa-video");
-      elem.classList.remove("btn-inactive");
-      elem.setAttribute("title", "Hide Video");
+// ─── Exported: Request to join (guest "Ask to Join" button) ──────────────────
 
-      myStream.getVideoTracks()[0].enabled = true;
+export const requestAdmittance = (meetingId) => {
+  currentMeetingId = meetingId;
+  if (socket.connected) {
+    sendSubscribe(meetingId, false);
+  } else {
+    socket.once("connect", () => sendSubscribe(meetingId, false));
+  }
+};
+
+// ─── Exported: Host subscribes immediately ───────────────────────────────────
+
+export const loadRtc = (meetingId, callbacks = {}) => {
+  rtcCallbacks = { ...rtcCallbacks, ...callbacks };
+  currentMeetingId = meetingId;
+  initSocketListeners(meetingId);
+
+  if (socket.connected) {
+    sendSubscribe(meetingId);
+  } else {
+    socket.once("connect", () => sendSubscribe(meetingId));
+  }
+
+  setupUIListeners();
+  getAndSetUserStream();
+};
+
+// ─── Exported: Init socket + camera preview for guest (no subscribe yet) ────
+
+export const initGuestRtc = (meetingId, callbacks = {}) => {
+  rtcCallbacks = { ...rtcCallbacks, ...callbacks };
+  currentMeetingId = meetingId;
+  initSocketListeners(meetingId);
+  // Start camera for pre-join preview — no subscribe yet
+  getAndSetUserStream();
+};
+
+// ─── Exported: Attach UI listeners after DOM renders for admitted guest ──────
+
+export const attachUIListeners = () => {
+  setupUIListeners();
+};
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+export const togglePreJoinMic = () => {
+  if (!myStream || !myStream.getAudioTracks().length) return true;
+  const track = myStream.getAudioTracks()[0];
+  track.enabled = !track.enabled;
+  return track.enabled;
+};
+
+export const togglePreJoinCamera = () => {
+  if (!myStream || !myStream.getVideoTracks().length) return true;
+  const track = myStream.getVideoTracks()[0];
+  track.enabled = !track.enabled;
+  return track.enabled;
+};
+
+export const getMyStream = () => myStream;
+
+// ─── Stream ───────────────────────────────────────────────────────────────────
+
+function getAndSetUserStream() {
+  if (myStream) {
+    // Already have stream — just attach to local element if present
+    const localEl = document.getElementById("local");
+    if (localEl && !localEl.srcObject) {
+      h.setLocalStream(myStream);
+      setupAudioVisualizer(myStream, "local-container");
     }
+    return;
+  }
+  h.getUserFullMedia()
+    .then((stream) => {
+      myStream = stream;
+      const localEl = document.getElementById("local");
+      if (localEl) {
+        h.setLocalStream(stream);
+        setupAudioVisualizer(stream, "local-container");
+      }
+    })
+    .catch((e) => console.error("stream error:", e));
+}
 
+function sendMsg(msg) {
+  const username = sessionStorage.getItem("username") || "Guest";
+  const room = sessionStorage.getItem("meetingId");
+  const data = { room, msg, sender: username };
+  socket.emit("chat", data);
+  h.addChat(data, "local");
+}
+
+// ─── UI Listeners ─────────────────────────────────────────────────────────────
+
+const setupUIListeners = () => {
+  const attach = (id, event, handler) => {
+    const el = document.getElementById(id);
+    if (el && !el.hasAttribute("data-listener-added")) {
+      el.addEventListener(event, handler);
+      el.setAttribute("data-listener-added", "true");
+    }
+  };
+
+  attach("chat-input", "keypress", (e) => {
+    if (e.which === 13 && e.target.value.trim()) {
+      e.preventDefault();
+      sendMsg(e.target.value);
+      setTimeout(() => { e.target.value = ""; }, 50);
+    }
+  });
+
+  attach("toggle-video", "click", (e) => {
+    e.preventDefault();
+    if (!myStream || !myStream.getVideoTracks().length) return;
+    const track = myStream.getVideoTracks()[0];
+    const elem = document.getElementById("toggle-video");
+    if (track.enabled) {
+      e.target.classList.replace("fa-video", "fa-video-slash");
+      elem.classList.add("btn-inactive");
+      elem.title = "Show Video";
+    } else {
+      e.target.classList.replace("fa-video-slash", "fa-video");
+      elem.classList.remove("btn-inactive");
+      elem.title = "Hide Video";
+    }
+    track.enabled = !track.enabled;
     broadcastNewTracks(myStream, "video");
   });
 
-  document.getElementById("toggle-mute").addEventListener("click", (e) => {
+  attach("toggle-mute", "click", (e) => {
     e.preventDefault();
-
-    let elem = document.getElementById("toggle-mute");
-
-    if (myStream.getAudioTracks()[0].enabled) {
-      e.target.classList.remove("fa-microphone-alt");
-      e.target.classList.add("fa-microphone-alt-slash");
+    if (!myStream || !myStream.getAudioTracks().length) return;
+    const track = myStream.getAudioTracks()[0];
+    const elem = document.getElementById("toggle-mute");
+    if (track.enabled) {
+      e.target.classList.replace("fa-microphone-alt", "fa-microphone-alt-slash");
       elem.classList.add("btn-inactive");
-      elem.setAttribute("title", "Unmute");
-
-      myStream.getAudioTracks()[0].enabled = false;
+      elem.title = "Unmute";
     } else {
-      e.target.classList.remove("fa-microphone-alt-slash");
-      e.target.classList.add("fa-microphone-alt");
+      e.target.classList.replace("fa-microphone-alt-slash", "fa-microphone-alt");
       elem.classList.remove("btn-inactive");
-      elem.setAttribute("title", "Mute");
-
-      myStream.getAudioTracks()[0].enabled = true;
+      elem.title = "Mute";
     }
-
+    track.enabled = !track.enabled;
     broadcastNewTracks(myStream, "audio");
   });
 
-  document.getElementById("share-screen").addEventListener("click", (e) => {
+  attach("share-screen", "click", (e) => {
     e.preventDefault();
-
-    if (
-      screen &&
-      screen.getVideoTracks().length &&
-      screen.getVideoTracks()[0].readyState !== "ended"
-    ) {
+    if (screen && screen.getVideoTracks().length && screen.getVideoTracks()[0].readyState !== "ended") {
       stopSharingScreen();
     } else {
       shareScreen();
@@ -380,26 +335,157 @@ export const loadRtc = (meetingId, callbacks = {}) => {
   });
 };
 
-export const admitUser = (meetingId, socketId) => {
-  if (socket) {
-    socket.emit("admit-user", { room: meetingId, socketId });
+// ─── WebRTC ───────────────────────────────────────────────────────────────────
+
+function init(createOffer, partnerName) {
+  if (pc[partnerName]) return;
+
+  pc[partnerName] = new RTCPeerConnection(h.getIceServer());
+
+  const addTracks = (stream) => {
+    stream.getTracks().forEach((t) => pc[partnerName].addTrack(t, stream));
+  };
+
+  if (screen && screen.getTracks().length) {
+    addTracks(screen);
+  } else if (myStream) {
+    addTracks(myStream);
+  } else {
+    h.getUserFullMedia()
+      .then((stream) => {
+        myStream = stream;
+        addTracks(stream);
+        const localEl = document.getElementById("local");
+        if (localEl) { h.setLocalStream(stream); }
+        setupAudioVisualizer(stream, "local-container");
+      })
+      .catch((e) => console.error("stream error:", e));
   }
+
+  if (createOffer) {
+    pc[partnerName].onnegotiationneeded = async () => {
+      try {
+        const offer = await pc[partnerName].createOffer();
+        await pc[partnerName].setLocalDescription(offer);
+        socket.emit("sdp", {
+          description: pc[partnerName].localDescription,
+          to: partnerName,
+          sender: socket.id,
+        });
+      } catch (e) {
+        console.error("Offer error:", e);
+      }
+    };
+  }
+
+  pc[partnerName].onicecandidate = ({ candidate }) => {
+    socket.emit("ice candidates", { candidate, to: partnerName, sender: socket.id });
+  };
+
+  pc[partnerName].ontrack = (e) => {
+    const str = e.streams[0];
+    const existing = document.getElementById(`${partnerName}-video`);
+    if (existing) {
+      existing.srcObject = str;
+    } else {
+      const vid = document.createElement("video");
+      vid.id = `${partnerName}-video`;
+      vid.srcObject = str;
+      vid.autoplay = true;
+      vid.playsInline = true;
+      vid.className = "remote-video";
+
+      const controls = document.createElement("div");
+      controls.className = "remote-video-controls";
+      controls.innerHTML = `<i class="fa fa-microphone text-app pr-3 mute-remote-mic" title="Mute"></i>
+        <i class="fa fa-expand text-app expand-remote-video" title="Expand"></i>`;
+
+      const nameBadge = document.createElement("div");
+      nameBadge.className = "video-name-label";
+      nameBadge.textContent = "Guest";
+
+      const card = document.createElement("div");
+      card.className = "card card-sm meet-video-container";
+      card.id = partnerName;
+      card.appendChild(vid);
+      card.appendChild(controls);
+      card.appendChild(nameBadge);
+
+      const grid = document.getElementById("videos");
+      if (grid) {
+        grid.appendChild(card);
+        h.adjustVideoElemSize();
+        setupAudioVisualizer(str, partnerName);
+      }
+    }
+  };
+
+  pc[partnerName].onconnectionstatechange = () => {
+    if (["disconnected", "failed", "closed"].includes(pc[partnerName].iceConnectionState)) {
+      h.closeVideo(partnerName);
+      delete pc[partnerName];
+    }
+  };
+
+  pc[partnerName].onsignalingstatechange = () => {
+    if (pc[partnerName].signalingState === "closed") {
+      h.closeVideo(partnerName);
+      delete pc[partnerName];
+    }
+  };
+}
+
+// ─── Screen Share ─────────────────────────────────────────────────────────────
+
+function shareScreen() {
+  h.shareScreen()
+    .then((stream) => {
+      h.toggleShareIcons(true);
+      h.toggleVideoBtnDisabled(true);
+      screen = stream;
+      broadcastNewTracks(stream, "video", false);
+      stream.getVideoTracks()[0].addEventListener("ended", stopSharingScreen);
+    })
+    .catch((e) => console.error(e));
+}
+
+function stopSharingScreen() {
+  h.toggleVideoBtnDisabled(false);
+  try {
+    if (screen && screen.getTracks().length) {
+      screen.getTracks().forEach((t) => t.stop());
+    }
+    h.toggleShareIcons(false);
+    broadcastNewTracks(myStream, "video");
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+function broadcastNewTracks(stream, type, mirrorMode = true) {
+  if (!stream) return;
+  h.setLocalStream(stream, mirrorMode);
+  const track = type === "audio" ? stream.getAudioTracks()[0] : stream.getVideoTracks()[0];
+  for (const pName in pc) {
+    if (pc[pName] && typeof pc[pName] === "object") {
+      h.replaceTrack(track, pc[pName]);
+    }
+  }
+}
+
+// ─── Exports ──────────────────────────────────────────────────────────────────
+
+export const admitUser = (meetingId, targetSocketId) => {
+  if (socket) socket.emit("admit-user", { room: meetingId, socketId: targetSocketId });
 };
 
-export const rejectUser = (meetingId, socketId) => {
-  if (socket) {
-    socket.emit("reject-user", { room: meetingId, socketId });
-  }
+export const rejectUser = (meetingId, targetSocketId) => {
+  if (socket) socket.emit("reject-user", { room: meetingId, socketId: targetSocketId });
 };
 
 export const record = (type = "screen") => {
-  console.log("recoerd is clien");
   if (!mediaRecorder || mediaRecorder.state === "inactive") {
-    if (type === "screen") {
-      return recordScreen();
-    } else {
-      return recordVideo();
-    }
+    return type === "screen" ? recordScreen() : recordVideo();
   } else if (mediaRecorder.state === "paused") {
     mediaRecorder.resume();
   } else if (mediaRecorder.state === "recording") {
@@ -409,58 +495,22 @@ export const record = (type = "screen") => {
 
 function startRecording(stream) {
   const username = sessionStorage.getItem("username");
-  mediaRecorder = new MediaRecorder(stream, {
-    mimeType: "video/webm;codecs=vp9",
-  });
-
+  mediaRecorder = new MediaRecorder(stream, { mimeType: "video/webm;codecs=vp9" });
   mediaRecorder.start(1000);
-
-  mediaRecorder.ondataavailable = function (e) {
-    recordedStream.push(e.data);
-  };
-
-  mediaRecorder.onstop = function () {
+  mediaRecorder.ondataavailable = (e) => recordedStream.push(e.data);
+  mediaRecorder.onstop = () => {
     h.saveRecordedStream(recordedStream, username);
-
-    setTimeout(() => {
-      recordedStream = [];
-    }, 3000);
+    setTimeout(() => { recordedStream = []; }, 3000);
   };
-
-  mediaRecorder.onerror = function (e) {
-    console.error(e);
-  };
+  mediaRecorder.onerror = (e) => console.error(e);
 }
 
 const recordScreen = () => {
-  if (screen && screen.getVideoTracks().length) {
-    startRecording(screen);
-    return true;
-  } else {
-    return h
-      .shareScreen()
-      .then((screenStream) => {
-        startRecording(screenStream);
-        return true;
-      })
-      .catch(() => {
-        return false;
-      });
-  }
+  if (screen && screen.getVideoTracks().length) { startRecording(screen); return true; }
+  return h.shareScreen().then((s) => { startRecording(s); return true; }).catch(() => false);
 };
 
 const recordVideo = () => {
-  if (myStream && myStream.getTracks().length) {
-    startRecording(myStream);
-    return true;
-  } else {
-    h.getUserFullMedia()
-      .then((videoStream) => {
-        startRecording(videoStream);
-        return true;
-      })
-      .catch(() => {
-        return false;
-      });
-  }
+  if (myStream && myStream.getTracks().length) { startRecording(myStream); return true; }
+  return h.getUserFullMedia().then((s) => { startRecording(s); return true; }).catch(() => false);
 };
